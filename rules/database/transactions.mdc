@@ -1,0 +1,87 @@
+---
+description: Rules for database transaction boundaries, coupling patterns, idempotency, and concurrency locking
+---
+
+# Database Transactions & Concurrency Rules
+
+## Core Principle
+
+A database transaction (`BEGIN ... COMMIT / ROLLBACK`) guarantees **Atomicity**, but holds row/table locks and consumes connection pool capacity for its entire duration. Choose between transactions and independent writes based on **data coupling** and **idempotency strategy**.
+
+---
+
+## 1. Tightly Coupled State → Use a Database Transaction
+
+Use `dataSource.transaction(...)` when multiple writes must **all succeed or all fail** to preserve a domain invariant.
+
+**Use a transaction when:**
+- Write B is strictly invalid or meaningless without Write A (e.g., creating a parent record and a required child record together).
+- A materialized counter or balance must stay in sync with the record it tracks (e.g., decrementing stock when creating an order line).
+- Partial failure would leave the database in a permanently inconsistent state that cannot be cleanly repaired on retry.
+
+```ts
+// Tightly coupled: both writes must succeed atomically
+await dataSource.transaction(async (manager) => {
+  await manager.save(Order, newOrder);
+  await manager.decrement(Product, { id: productId }, 'stockCount', quantity);
+});
+```
+
+---
+
+## 2. Loosely Coupled State → Independent Writes + Check-Then-Act Idempotency
+
+Do **not** wrap loosely coupled operations in a single transaction. Prefer independent writes with an idempotency guard on retry.
+
+**Avoid a transaction when:**
+- The child record is an append-only log, audit trail, or enrichment (its existence does not invalidate anything if the downstream step fails).
+- Intermediate partial state is detectable and safely resumable on retry without corruption.
+
+**Pattern — Check-Then-Act idempotency on retry:**
+1. Persist step 1 immediately (no transaction).
+2. Before step 2, check whether step 1's output already exists.
+3. If it does, skip step 1 and proceed directly to step 2.
+
+```ts
+// Loosely coupled: persist the log immediately, retry the downstream update safely
+const existingLog = await logRepo.findOne({ where: { referenceId } });
+if (!existingLog) {
+  await logRepo.save(newLog); // Step 1: append-only, safe to persist independently
+}
+await recordRepo.update(recordId, enrichmentData); // Step 2: idempotent on retry
+```
+
+---
+
+## 3. External Network I/O Boundary
+
+**Never hold a database transaction open while waiting for external network I/O.**
+
+This includes: HTTP API calls, third-party services, payment gateways, messaging services, or any operation with non-trivial latency.
+
+- Perform the external call **before** opening the transaction, or **after** committing it.
+- Keep transactions limited to fast, local SQL operations only.
+- Violating this rule holds DB connection pool threads and row/table locks for the full duration of the external call, degrading performance under load.
+
+---
+
+## 4. Concurrency & Capacity Quotas
+
+When enforcing a hard capacity limit that multiple concurrent workers may check simultaneously (e.g., a maximum active assignment count per user), a plain read-then-write check is vulnerable to race conditions.
+
+**Solution**: Combine a transaction with a **pessimistic write lock** (`SELECT ... FOR UPDATE`) on the resource being contended:
+
+```ts
+await dataSource.transaction(async (manager) => {
+  // Lock the row so concurrent workers must wait before reading the count
+  const resource = await manager.findOne(User, {
+    where: { id: userId },
+    lock: { mode: 'pessimistic_write' },
+  });
+
+  if (resource.activeCount < MAX_CAPACITY) {
+    await manager.update(Assignment, assignmentId, { userId });
+    await manager.increment(User, { id: userId }, 'activeCount', 1);
+  }
+});
+```

@@ -1,0 +1,98 @@
+---
+description: Database schema design, entity modeling, relationships, indexing, and sensitive data rules for TypeORM + PostgreSQL projects
+---
+
+# Database Schema, Entities & Indexing Rules
+
+## Database Stack
+
+The primary database is **PostgreSQL**. Use **TypeORM** for:
+
+- Entities
+- Repositories
+- Migrations
+- Database configuration
+
+## Entities
+
+Entities must represent persistent domain data.
+
+Keep entities focused on their domain responsibility. Avoid bloating a core domain entity with transient, computed, or audit data when a separate table provides better traceability and independent lifecycle management.
+
+**Prefer separation when:**
+- A record can have multiple historical entries for the same parent (e.g., event logs, audit trails, versioned analyses).
+- The child record has its own independent lifecycle, metadata, or retention policy.
+
+```text
+# Example: Separate audit/log records from the parent entity
+orders (1) ───► (N) order_events
+users  (1) ───► (N) login_audit_logs
+```
+
+## Primary Keys (Hybrid Strategy)
+
+Adopt a tiered primary key strategy based on the table's architectural role:
+
+- **UUID for Domain & Public Entities**:
+  - Use for core business entities exposed in public APIs, routes, or URLs (e.g., `users`, `customers`, `tickets`, `orders`, `tenants`).
+  - Prevents enumeration attacks, eliminates IDOR scraping risks, and enables ID generation in API/queue layers before DB persistence.
+- **BigInt (Auto-Increment) for Internal & High-Volume Tables**:
+  - Use for internal, high-throughput, append-only records never exposed as standalone public URLs (e.g., `audit_logs`, `event_streams`, `metrics`).
+  - Cuts index/storage footprint in half (8 bytes vs. 16 bytes) and prevents B-Tree index fragmentation under heavy insert loads.
+  - *JavaScript Safety*: Always type PostgreSQL `bigint` columns as `string` in TypeScript entities to avoid precision loss (> $2^{53} - 1$).
+- **Composite Keys for Junction Tables**:
+  - Use composite primary keys `(entity_a_id, entity_b_id)` for pure many-to-many association tables.
+- **Foreign Key Invariant**:
+  - Foreign key columns must strictly match the data type of the referenced primary key (`UUID` references `UUID`, `bigint` references `bigint`).
+
+## Relationships
+
+Use explicit foreign keys (`@JoinColumn`) and appropriate TypeORM relationship decorators:
+
+- Do not create relationships merely for convenience.
+- Always consider cardinality, query patterns, indexing, and referential integrity.
+- Define `ON DELETE` behavior explicitly (`CASCADE`, `SET NULL`, `RESTRICT`) based on the domain invariant.
+
+## Indexes
+
+Add indexes based on **actual query patterns**, not speculatively. Each index has a write-cost trade-off.
+
+### Agent Workflow (Suggest, Never Auto-Apply)
+
+Do **NOT** automatically add indexes to entities or migrations on your own. When introducing or modifying schemas, analyze anticipated query patterns and **proactively flag candidate columns to the developer for explicit approval** before generating or finalizing the migration.
+
+### Candidate Criteria for Developer Review
+
+Remind the developer to consider an index when columns meet any of the following:
+
+- **Foreign keys** used in `JOIN` or `WHERE` clauses (e.g., `user_id`, `team_id`, `order_id`)
+- **Status/state columns** frequently filtered in queues, dashboards, or list queries
+- **Timestamp columns** used for sorting or range filtering (`created_at`, `updated_at`)
+- **Lookup columns** used in high-frequency search filters or composite unique constraints
+
+## Audit & Traceability Records
+
+When a feature requires historical traceability (e.g., AI analysis results, payment attempts, status change history), capture them in a dedicated child table rather than overwriting fields on the parent entity.
+
+Each traceability record should capture enough metadata to independently answer:
+- What happened?
+- When did it happen?
+- Which model, version, or service was responsible?
+- Did it succeed or fail?
+- How long did it take and what did it cost?
+
+## Column Naming & Timestamps
+
+- **Column Naming**:
+  - Database column names in SQL/DDL must use `snake_case` (e.g., `user_id`, `created_at`, `team_code`).
+  - TypeScript entity properties must use `camelCase` (e.g., `userId`, `createdAt`, `teamCode`), explicitly mapped via `@Column({ name: 'snake_case' })` or the database naming strategy.
+- **Timestamps**:
+  - Always store timestamps in **UTC**.
+  - Use PostgreSQL `timestamptz` (`timestamp with time zone`) for all date-time columns, never plain `timestamp` without time zone.
+  - Standard lifecycle timestamps must use TypeORM's `@CreateDateColumn({ type: 'timestamptz' })` and `@UpdateDateColumn({ type: 'timestamptz' })`.
+
+## Sensitive Data
+
+- Never store sensitive information (passwords in plain text, raw payment data, private tokens) unless the domain strictly requires it, and only in the appropriate secured column.
+- Never expose password hashes, internal tokens, or infrastructure details in API responses or relationship-loaded entities.
+- Strip sensitive fields explicitly when returning entities that include user or credential relations.

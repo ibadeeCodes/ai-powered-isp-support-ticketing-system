@@ -1,0 +1,71 @@
+---
+description: Transport security standards, rate limiting, brute-force defense, security headers, CORS, and SQL parameterization
+---
+
+# Transport Security, Rate Limiting & Abuse Prevention
+
+## 1. Rate Limiting & Brute-Force Defense
+
+Publicly accessible endpoints (especially authentication and payment verification routes) are prime targets for automated credential stuffing, brute-force attacks, and denial-of-service.
+
+### Throttler Standard:
+The application must configure NestJS's `@nestjs/throttler` module with sensible global limits and strict overrides on sensitive routes:
+
+- **Global Baseline**: A general rate limit across standard API endpoints (e.g., 60 requests per minute).
+- **Sensitive Route Throttling**: Strict limits on authentication and password reset endpoints:
+  ```typescript
+  // Example: Limit login attempts to 5 per minute per IP
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('login')
+  async login(@Body() dto: LoginDto) { ... }
+  ```
+- **Standard 429 Status**: When rate limits are exceeded, return `429 Too Many Requests` with a clear message and `Retry-After` header.
+
+---
+
+## 2. HTTP Security Headers (Helmet)
+
+The backend must register `helmet` middleware at application bootstrap to establish defensive HTTP response headers:
+
+```typescript
+// main.ts
+import helmet from 'helmet';
+
+app.use(helmet());
+```
+
+### Protection Provided:
+- **`X-Content-Type-Options: nosniff`**: Prevents browsers from MIME-sniffing responses away from the declared content-type.
+- **`X-Frame-Options: SAMEORIGIN` / `DENY`**: Protects against clickjacking attacks by forbidding iframe embedding on untrusted domains.
+- **`Strict-Transport-Security` (HSTS)**: Enforces secure HTTPS connections and prevents SSL-stripping attacks.
+- **`X-XSS-Protection`**: Enables cross-site scripting filters in legacy user agents.
+
+---
+
+## 3. Strict CORS Policy
+
+Cross-Origin Resource Sharing (CORS) must be configured deterministically based on deployment environment:
+
+- **Production Environment**:
+  - Always enforce an **explicit origin whitelist** matching the exact frontend and admin domains (e.g., `origin: ['https://app.example.com', 'https://admin.example.com']`).
+  - **Never use wildcard `origin: '*'`** when `credentials: true` (cookies, authorization headers) is enabled.
+- **Development Environment**:
+  - Local development origins (e.g., `http://localhost:3000`, `http://localhost:3001`) are permitted.
+
+---
+
+## 4. SQL Injection Prevention & Parameterization
+
+SQL injection occurs when user-supplied input is concatenated directly into SQL syntax.
+
+### Mandatory Rules:
+- **Zero Raw String Concatenation**: Never interpolate or concatenate request parameters directly into raw SQL or QueryBuilder strings (`where('user.id = ' + id)` is strictly forbidden).
+- **Always Use Named/Positional Parameters**: Always use TypeORM's bound parameter syntax:
+  ```typescript
+  // ❌ Vulnerable to SQL injection
+  queryBuilder.where(`user.email = '${email}'`);
+
+  // ✅ Secure: Parameterized and escaped by database driver
+  queryBuilder.where('user.email = :email', { email });
+  ```
+

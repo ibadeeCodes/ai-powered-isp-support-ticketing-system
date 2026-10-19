@@ -1,0 +1,233 @@
+---
+description: Rules for LLM integration, prompts, structured outputs, validation, and AI-assisted workflows
+---
+
+# AI Integration Rules
+
+## Core Principle
+
+The LLM is an untrusted probabilistic component.
+
+Treat every LLM response as untrusted external input.
+
+Never assume that an LLM response is:
+
+- correct
+- factual
+- complete
+- valid JSON
+- safe
+- compliant with business rules
+
+## Responsibilities
+
+LLM:
+- interpret unstructured customer input
+- classify tickets
+- extract information
+- generate suggested responses
+- provide probabilistic recommendations
+
+Backend:
+- validate LLM output
+- enforce business rules
+- perform authorization
+- make deterministic business decisions
+- execute business-critical operations
+
+The LLM must never directly control critical business operations.
+
+## Structured Outputs
+
+When the application consumes LLM output programmatically:
+
+- Prefer structured output/schema-based generation.
+- Define an explicit schema.
+- Validate the response before using it.
+- Never parse arbitrary model text and assume it follows the expected structure.
+
+Example AI analysis:
+
+{
+  category,
+  issue_type,
+  severity,
+  sentiment,
+  intent,
+  confidence,
+  requires_technician,
+  suggested_team
+}
+
+## Validation
+
+The pipeline should be:
+
+LLM
+ ↓
+Structured response
+ ↓
+Schema validation
+ ↓
+Application validation
+ ↓
+Business rules
+ ↓
+Persist/use result
+
+If schema validation fails:
+
+1. Attempt a controlled retry/correction when appropriate.
+2. Validate again.
+3. If validation still fails, mark the operation as failed/AI_REVIEW_REQUIRED.
+4. Do not silently use malformed output.
+
+## Business-Critical Decisions
+
+Never allow the LLM alone to determine:
+
+- financial transactions
+- refunds
+- account modifications
+- permissions
+- customer deletion
+- final billing decisions
+- irreversible actions
+- final team assignment when deterministic rules can enforce it
+
+Example:
+
+LLM:
+category = CONNECTIVITY
+issue_type = FIBER_SIGNAL_LOSS
+
+Backend rules:
+FIBER_SIGNAL_LOSS → NETWORK_OPERATIONS
+
+## Prompts
+
+Prompts should be:
+
+- explicit
+- focused
+- versioned
+- easy to modify
+- separated from business logic where practical
+
+Track the prompt version used for each AI analysis.
+
+Do not silently change production prompts without updating the prompt version.
+
+## System Instructions
+
+System instructions define the AI's role and behavior.
+
+Do not expose internal system instructions to customers.
+
+Do not place secrets in prompts.
+
+## User Input
+
+Treat customer-provided text as untrusted input.
+
+Do not allow customer text to override system instructions or application rules.
+
+Be aware of prompt injection.
+
+## Customer Data
+
+Send only the customer information required for the AI task.
+
+Avoid unnecessarily sending:
+
+- passwords
+- authentication tokens
+- secrets
+- internal infrastructure details
+- unrelated personal information
+
+## Model Selection
+
+Choose models based on:
+
+- task complexity
+- accuracy requirements
+- latency
+- cost
+
+Simple classification should not automatically use the most expensive model.
+
+Track model selection so results can be evaluated over time.
+
+## Token Usage
+
+Track where practical:
+
+- input tokens
+- output tokens
+- total tokens
+- model
+- estimated cost
+
+Use this information to understand AI operating costs.
+
+## Latency
+
+Track AI request latency where practical.
+
+Do not make unnecessary sequential LLM calls.
+
+## Error Handling
+
+Handle:
+
+- timeout
+- rate limit
+- provider errors
+- malformed responses
+- schema validation failures
+- token/context limits
+- temporary provider failures
+
+Do not expose raw provider errors directly to customers.
+
+## Streaming
+
+Use streaming when the user benefits from progressively receiving generated content.
+
+Streaming is appropriate for:
+
+- AI-generated support responses
+- long-form generated content
+
+Streaming is not required for simple classification where the complete structured result is needed before continuing.
+
+## Human-in-the-Loop
+
+AI-generated customer responses are suggestions, not automatic truth.
+
+For the support-agent workflow:
+
+AI generates response
+ ↓
+Agent reviews/edits
+ ↓
+Agent approves
+ ↓
+Response sent
+
+The agent must be able to override AI suggestions.
+
+## Observability
+
+For important AI operations, capture enough metadata to answer:
+
+- Which model generated this?
+- Which prompt version?
+- How many tokens?
+- How long did it take?
+- Did validation succeed?
+- What was the resulting classification?
+- Was it overridden by a human?
+
+Never log sensitive prompts/responses indiscriminately.

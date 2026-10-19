@@ -1,0 +1,62 @@
+---
+description: NestJS Dependency Injection protocols, async/await standards, error handling, and concurrency rules
+---
+
+# Dependency Injection & Async Concurrency Rules
+
+## 1. NestJS Dependency Injection (DI)
+
+NestJS's built-in IoC (Inversion of Control) container manages the lifecycle and wiring of all application providers.
+
+### Strict Injection Rules:
+- **Constructor Injection**: Always inject dependencies via class constructors using explicit access modifiers (`private readonly service: MyService`).
+- **No Manual Instantiation**: Never instantiate an `@Injectable()` service manually using `new MyService()`. Manual instantiation bypasses NestJS lifecycle hooks, configuration scoping, and testing mocks.
+- **Module Encapsulation**: If `ServiceA` from `ModuleA` is needed in `ModuleB`:
+  1. Add `ServiceA` to `ModuleA`'s `exports` array.
+  2. Import `ModuleA` into `ModuleB`'s `imports` array.
+  3. Inject `ServiceA` into `ModuleB`'s providers via constructor.
+
+```typescript
+// ✅ Correct: Injected via NestJS DI
+@Injectable()
+export class OrderService {
+  constructor(
+    private readonly paymentService: PaymentService,
+    private readonly inventoryService: InventoryService,
+  ) {}
+}
+
+// ❌ Antipattern: Manual instantiation
+export class OrderService {
+  private paymentService = new PaymentService(); // Breaks DI and test mocking
+}
+```
+
+---
+
+## 2. Asynchronous Operations & Concurrency
+
+### Always Await or Return Promises:
+- Every asynchronous operation must be awaited or returned as part of a promise chain.
+- Never leave "floating promises" (invoking an async function without `await`, `return`, or an explicit `.catch()` handler). Floating promises lead to unhandled rejections, silent failures, and memory leaks.
+
+### Avoid Artificial Sequential Blocking:
+When multiple asynchronous I/O operations (database queries, external API calls, cache fetches) are **completely independent** of each other, run them concurrently using `Promise.all` instead of awaiting them sequentially.
+
+```typescript
+// ❌ Slow & Inefficient: Sequential blocking (takes latency_A + latency_B)
+const user = await this.userRepository.findOne({ where: { id: userId } });
+const settings = await this.settingsRepository.findOne({ where: { userId } });
+
+// ✅ Fast & Concurrent: Parallel execution (takes max(latency_A, latency_B))
+const [user, settings] = await Promise.all([
+  this.userRepository.findOne({ where: { id: userId } }),
+  this.settingsRepository.findOne({ where: { userId } }),
+]);
+```
+
+### Deterministic Error Handling:
+- Handle expected business rejections explicitly with domain or HTTP exceptions.
+- Never swallow promise rejections with empty `catch {}` blocks.
+- If an operation fails, ensure any partial state is cleaned up or logged with contextual metadata (user ID, resource ID, operation name).
+

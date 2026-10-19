@@ -1,0 +1,96 @@
+---
+description: Response envelopes, pagination format, error handling/masking, and OpenAPI/Swagger documentation rules
+---
+
+# API Responses, Error Handling & Documentation Rules
+
+## 1. Standard Pagination Envelope
+
+All endpoints returning paginated lists must wrap the payload in a standard, uniform response envelope:
+
+```typescript
+export interface PaginatedResponse<T> {
+  items: T[];
+  pagination: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+```
+
+```json
+// Example Response
+{
+  "items": [
+    { "id": "uuid-1", "name": "Resource 1" },
+    { "id": "uuid-2", "name": "Resource 2" }
+  ],
+  "pagination": {
+    "total": 50,
+    "page": 1,
+    "limit": 20,
+    "totalPages": 3
+  }
+}
+```
+
+---
+
+## 2. Unified Error Response Structure
+
+All client and server errors must adhere to a standardized JSON error contract:
+
+```json
+{
+  "statusCode": 400,
+  "error": "Bad Request",
+  "message": ["email must be an email", "password is too short"],
+  "timestamp": "2026-10-19T10:00:00.000Z",
+  "path": "/api/users"
+}
+```
+
+### Exception Masking & Global Filter
+The application must use a global `HttpExceptionFilter` to intercept all unhandled exceptions:
+
+- **Client Exceptions (`HttpException`, 4xx)**: Return user-facing validation and error messages.
+- **Server Exceptions (500 & Unhandled Errors)**:
+  - Log the complete stack trace, SQL query, or underlying driver error **internally** via NestJS `Logger`.
+  - Return a sanitized, generic error message to the client (e.g., `Internal Server Error`).
+  - **Never leak** SQL queries, TypeORM driver exceptions, database table names, stack traces, or environment secrets to clients.
+
+---
+
+## 3. OpenAPI / Swagger Documentation & Environment Policy
+
+Public controllers and DTOs must maintain accurate OpenAPI documentation.
+
+### Documentation Standards
+- **Decorate Controllers**: Tag controllers using `@ApiTags('resource-name')` and declare security requirements with `@ApiBearerAuth()`.
+- **Decorate Endpoints**: Specify `@ApiOperation({ summary: '...' })` and define explicit `@ApiResponse()` decorators for success and expected error codes (`200`, `201`, `400`, `404`).
+- **Decorate DTOs**: Every DTO property must have `@ApiProperty()` or `@ApiPropertyOptional()` with type, description, and example values.
+
+### Environment Gating Policy (Development & Staging Only)
+API documentation must **never be publicly exposed in production**:
+
+- **Enabled Environments**: `development` and `staging` (served at `/api/docs`).
+- **Production Environment**: **Strictly disabled** when `NODE_ENV === 'production'` to prevent reconnaissance of internal endpoints, schemas, and live execution interfaces.
+
+```typescript
+// main.ts
+const isProduction = process.env.NODE_ENV === 'production';
+
+if (!isProduction) {
+  const swaggerConfig = new DocumentBuilder()
+    .setTitle('API Documentation')
+    .setVersion('1.0')
+    .addBearerAuth()
+    .build();
+
+  const document = SwaggerModule.createDocument(app, swaggerConfig);
+  SwaggerModule.setup('api/docs', app, document);
+}
+```
+

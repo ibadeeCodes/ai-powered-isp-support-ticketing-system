@@ -1,0 +1,57 @@
+---
+description: Authentication standards, server-derived identity context, password hashing, and user enumeration prevention
+---
+
+# Authentication & Identity Context Rules
+
+## 1. Server-Derived Identity Context (Never Trust Client Identity)
+
+The authenticated user's identity, role, and tenant/team association must **always originate from the verified server-side authentication context** (e.g., verified JWT payload or session attached to `req.user` via guards).
+
+### Strict Invariants:
+- **Never Trust Client Body or Query for Identity**: Never allow client payloads to specify who they are acting as (e.g., passing `userId`, `customerId`, or `tenantId` in a `POST` or `PATCH` body when authenticated).
+- **Extract Identity Server-Side**: Always extract user identity using custom NestJS parameter decorators (e.g., `@CurrentUser()` / `@Req()`).
+- **Authorization Guard Enforcement**: Secure endpoints using dedicated authentication guards (`JwtAuthGuard`) before executing business logic.
+
+```typescript
+// ❌ Dangerous: Allows impersonation if client sends another user's ID
+@Post('orders')
+async createOrder(@Body() dto: CreateOrderDto) {
+  return this.orderService.create(dto.userId, dto); // Security vulnerability
+}
+
+// ✅ Correct: Identity extracted strictly from verified token
+@Post('orders')
+async createOrder(
+  @CurrentUser() user: AuthenticatedUser,
+  @Body() dto: CreateOrderDto,
+) {
+  return this.orderService.create(user.id, dto);
+}
+```
+
+---
+
+## 2. Password & Credential Hashing
+
+- **Salted Hashing**: Always hash user passwords before persistence using industry-standard salted algorithms (e.g., `bcrypt` with a minimum cost factor of `10`–`12`, or `argon2id`).
+- **Never Plaintext**: Plaintext passwords or weakly hashed passwords (MD5, SHA1, SHA256 without salt) are strictly forbidden.
+- **Immediate Hash**: Perform password hashing at the service boundary before handing off to repositories; never persist an unhashed password even in temporary entity states.
+
+---
+
+## 3. User Enumeration Defense
+
+Public authentication endpoints (`/auth/login`, `/auth/forgot-password`, `/auth/reset-password`) must never disclose whether a specific user account exists in the system.
+
+### Standards:
+- **Generic Login Errors**: Always return identical generic error messages on authentication failure (e.g., `"Invalid email or password"`), rather than distinguishing between `"User not found"` and `"Incorrect password"`.
+- **Consistent Response Timing**: Ensure the processing time for non-existent users is comparable to existing users (e.g., running dummy password hashing when user lookup fails) to prevent timing-based user enumeration.
+- **Generic Password Reset Responses**: For forgot-password requests, return a generic success confirmation regardless of whether the email was found in the database (e.g., `"If an account exists with this email, instructions have been sent"`).
+
+---
+
+## 4. Timing-Safe Comparisons
+
+When comparing sensitive security tokens (API keys, webhook signatures, reset tokens, HMAC digests), always use **constant-time comparison** functions (e.g., Node.js `crypto.timingSafeEqual`) rather than standard equality operators (`===`). Standard string comparison leaks token characters through microsecond timing differences.
+

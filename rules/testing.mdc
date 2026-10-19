@@ -1,0 +1,112 @@
+---
+description: Testing standards for backend, AI integration, and application workflows
+---
+
+# Testing Rules
+
+## General
+
+Tests should verify behavior, not implementation details.
+
+Prioritize tests around:
+
+- business logic
+- API contracts
+- validation
+- error handling
+- important AI workflows
+
+## Unit Tests
+
+Unit test business logic independently.
+
+Mock external dependencies such as:
+
+- LLM providers
+- external APIs
+- email services
+- payment services
+
+Do not make real LLM API calls in normal unit tests.
+
+## AI Testing
+
+AI output must be tested at multiple boundaries.
+
+Test:
+
+1. Valid structured AI output.
+2. Invalid structured output.
+3. Missing required fields.
+4. Incorrect field types.
+5. Invalid enum values.
+6. Confidence outside the allowed range.
+7. LLM timeout/failure.
+8. Provider rate limit.
+9. Retry behavior.
+10. Business rules applied to valid AI output.
+
+## Example
+
+Given:
+
+category = CONNECTIVITY
+issue_type = FIBER_SIGNAL_LOSS
+
+The test should verify that the deterministic routing rule produces:
+
+NETWORK_OPERATIONS
+
+Do not test that the LLM will always produce this classification using a live API call.
+
+## API Tests
+
+Test:
+
+- successful requests
+- validation errors
+- not-found cases
+- authorization failures where applicable
+- expected server errors
+- response structure
+
+## Integration Tests
+
+Use integration tests for important interactions between:
+
+- application services
+- database
+- repositories
+- AI orchestration
+
+Use controlled/mock AI responses where possible.
+
+## Evaluation Dataset
+
+Maintain a small representative ISP ticket dataset.
+
+Each example should contain:
+
+- subject
+- description
+- expected category
+- expected issue type
+- expected severity
+- expected intent
+
+Use the dataset to evaluate AI behavior when prompts or models change.
+
+## Regression
+
+When an AI behavior bug is discovered:
+
+1. Add a representative test case.
+2. Fix the prompt/schema/application logic.
+3. Run the evaluation set.
+4. Confirm existing cases did not regress.
+
+## Test Quality
+
+Do not create tests merely to increase coverage percentage.
+
+A smaller set of meaningful tests is preferable to a large number of superficial tests.

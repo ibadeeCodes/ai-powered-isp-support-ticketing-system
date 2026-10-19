@@ -1,0 +1,80 @@
+---
+description: Rules for writing efficient database queries: SQL-level filtering, aggregation, deterministic sorting, N+1 prevention, and pagination
+---
+
+# Database Queries & Performance Rules
+
+## 1. Filter & Aggregate in SQL — Never in Application Memory
+
+Always apply filters, conditions, and aggregations **in the database query**, not in Node.js after fetching data.
+
+- Apply access-control and visibility conditions (e.g., `WHERE owner_id = :userId`, `WHERE tenant_id = :tenantId`) directly in the `WHERE` clause — never fetch all rows and filter with `.filter()`.
+- Calculate counts, sums, or workload metrics in SQL using `LEFT JOIN`, `COUNT(...)`, and `GROUP BY` rather than loading multiple entities into memory and counting them in application code.
+
+```ts
+// ✅ Correct — aggregation in SQL
+queryBuilder
+  .leftJoin('assignment', 'a', 'a.user_id = user.id AND a.status IN (:...active)', { active })
+  .select('user.id')
+  .addSelect('COUNT(a.id)', 'active_count')
+  .groupBy('user.id');
+
+// ❌ Wrong — loading all records and counting in memory
+const users = await userRepo.find({ relations: ['assignments'] });
+const counts = users.map(u => ({ id: u.id, count: u.assignments.length }));
+```
+
+## 2. Combining OR Conditions with Mandatory Security Filters
+
+When combining `OR`-based search conditions (e.g., search by name or email) with mandatory security/visibility conditions (e.g., `tenant_id`, `owner_id`), always wrap the `OR` group inside `Brackets(...)` to prevent it from bypassing the `AND` security filter.
+
+```ts
+// ✅ Correct — OR is scoped inside Brackets, security filter is never bypassed
+queryBuilder
+  .where('record.owner_id = :ownerId', { ownerId })
+  .andWhere(new Brackets(qb => {
+    qb.where('record.name ILIKE :search', { search })
+      .orWhere('record.email ILIKE :search', { search });
+  }));
+```
+
+## 3. Deterministic Sorting & Tie-Breakers
+
+Whenever sorting a list, queue, or selecting a single top-1 record, always append a **deterministic tie-breaker** on a unique column (typically the primary key).
+
+Without a tie-breaker, two records sharing the same sort value (e.g., same timestamp, count, or priority) can return in different order across queries or pages, producing inconsistent pagination results.
+
+```ts
+queryBuilder
+  .orderBy('record.created_at', 'DESC')
+  .addOrderBy('record.id', 'ASC'); // Tie-breaker ensures stable ordering
+```
+
+## 4. N+1 Prevention & Selective Fetching
+
+- Avoid N+1 queries by using explicit `relations`, `leftJoinAndSelect`, or `innerJoinAndSelect` when related entities are needed for the response.
+- Fetch only the columns and relations required by the specific operation or DTO — do not load full entity graphs when only a few fields are needed.
+
+```ts
+// ✅ Load only what is needed
+await repo.find({
+  where: { status: 'ACTIVE' },
+  relations: ['owner'],
+  select: { id: true, title: true, owner: { id: true, name: true } },
+});
+```
+
+## 5. Pagination
+
+Always enforce pagination on endpoints that return potentially large collections.
+
+- Use `skip` + `take` (or `page` + `limit`) with a **capped maximum limit** to prevent unbounded queries.
+- Always return pagination metadata alongside the data: `total`, `page`, `limit`, `totalPages`.
+
+```ts
+const [items, total] = await repo.findAndCount({
+  skip: (page - 1) * limit,
+  take: Math.min(limit, MAX_LIMIT),
+});
+return { items, pagination: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+```

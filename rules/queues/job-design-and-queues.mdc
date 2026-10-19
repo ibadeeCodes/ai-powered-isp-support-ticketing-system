@@ -1,0 +1,64 @@
+---
+description: Rules for background queue evaluation, worker offloading boundaries, and lean job payload design
+---
+
+# Background Queue Architecture & Job Design
+
+## 1. Agent Workflow: Propose, Justify & Confirm
+
+Background queues introduce distributed systems complexity (eventual consistency, Redis operational dependency, serialized execution, and out-of-band debugging).
+
+### Hard Rule for AI Agents:
+Do **NOT** unilaterally introduce background queues, worker processors, or Redis dependencies for an endpoint or workflow. You must:
+1. Identify the specific bottleneck (e.g., slow third-party API, high-latency LLM call, heavy CPU processing).
+2. Explicitly propose the queue architecture to the developer with a clear justification.
+3. Wait for the developer's explicit confirmation before introducing the queue.
+
+---
+
+## 2. Decision Matrix: Synchronous vs. Background Queue
+
+Synchronous execution is always the default. Evaluate proposals against this matrix:
+
+| Keep Synchronous (Default) | Offload to Background Queue (Justified) |
+| :--- | :--- |
+| Standard database CRUD operations (`INSERT`, `UPDATE`, `SELECT`) | High-latency external network calls (> 1–2s, e.g., LLMs, external document generation) |
+| Operations where the client strictly requires the immediate result to render the next UI state | Transactional notifications where client should not wait on provider latency (bulk emails, SMS, push) |
+| Synchronous business validations and invariants | Asynchronous webhooks or third-party integrations with strict retry/rate-limit requirements |
+| Low-volume tasks where failure can immediately return a standard 4xx/5xx HTTP error to the user | Heavy CPU-bound background processing (report exports, video/image transcoding, CSV parsing) |
+
+---
+
+## 3. Lean Job Payloads
+
+Redis memory is finite, and job data is serialized over the wire. Never pass large objects or sensitive data into queue jobs.
+
+### Payload Rules:
+- **Pass Identifiers Only**: Pass primitive record IDs (`{ orderId: string, userId: string }`) and essential contextual flags.
+- **Never Pass Entity Graphs**: Never serialize full TypeORM entity instances, large text blobs, or deep relation trees into job data.
+- **Worker Re-Fetches State**: The worker processor must query the database using the record ID to obtain fresh, consistent data when the job executes.
+- **Zero Secrets in Payloads**: Never include passwords, raw auth tokens, or private payment secrets in job payloads.
+
+```typescript
+// ❌ Bad: Bloated, risks stale data and leaks secrets in Redis
+await queue.add('process-order', { order: fullOrderEntityInstanceWithRelations });
+
+// ✅ Good: Lean payload, worker reads fresh state from DB
+await queue.add('process-order', {
+  orderId: savedOrder.id,
+  triggerSource: 'checkout_api',
+});
+```
+
+---
+
+## 4. Queue Isolation & Naming Conventions
+
+- **Kebab-Case Naming**: Name queues using lowercase kebab-case reflecting the domain boundary (e.g., `order-processing`, `email-notifications`, `report-generation`).
+- **Separate by Latency / Workload**: Do not mix sub-second notification jobs with multi-minute report generation jobs in the same queue. Separate queues ensure slow jobs do not starve fast, high-priority jobs.
+- **Export Queue & Job Constants**: Avoid magic strings. Export queue and job name constants from dedicated configuration or module files:
+  ```typescript
+  export const ORDER_PROCESSING_QUEUE = 'order-processing';
+  export const FULFILL_ORDER_JOB = 'fulfill-order';
+  ```
+

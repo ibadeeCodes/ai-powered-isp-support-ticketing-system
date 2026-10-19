@@ -1,0 +1,77 @@
+---
+description: Global engineering principles, approved core stack, and development standards
+---
+
+# Global Engineering Rules
+
+## Core Principles
+
+- Prefer simple, maintainable solutions over unnecessary abstractions.
+- Follow separation of concerns.
+- Keep business logic out of controllers, UI components, and infrastructure code.
+- Prefer explicit, readable code over clever code.
+- Do not introduce a library or framework unless there is a clear benefit.
+- Do not over-engineer for hypothetical future requirements.
+- Reuse existing project patterns before introducing new ones.
+- Keep modules/components focused on a single responsibility.
+- Avoid duplicated business logic.
+
+## Approved Core Stack
+
+Do not introduce alternative libraries or duplicate tooling when standard project libraries already handle the concern:
+
+- **Runtime & Language**: Node.js (v20+ LTS), TypeScript (strict mode)
+- **Backend Framework**: NestJS (IoC, modular architecture)
+- **Database & ORM**: PostgreSQL (v16+), TypeORM
+- **Request Validation & Serialization**: `class-validator`, `class-transformer`
+- **Asynchronous Background Queues**: BullMQ, Redis (`ioredis`)
+- **API Documentation**: Swagger / OpenAPI (`@nestjs/swagger`)
+- **Testing**: Jest
+
+## TypeScript
+
+- Use strict TypeScript.
+- Avoid `any` unless there is a documented reason.
+- Prefer explicit types for public interfaces and important domain objects.
+- Use enums/constants for controlled domain values where appropriate.
+- Do not silently ignore TypeScript errors.
+
+## Error Handling
+
+- Handle expected failures explicitly.
+- Never swallow errors silently.
+- Return meaningful errors from application boundaries.
+- Do not expose internal implementation details, stack traces, API keys, prompts, or infrastructure information to clients.
+
+## Configuration & Secrets
+
+- Never hardcode secrets, API keys, passwords, or credentials.
+- Use environment variables for configuration and secrets.
+- Never commit `.env` files containing secrets.
+- Update `.env.example` when adding required environment variables.
+
+## API / Domain Boundaries
+
+- Keep domain/business logic independent from HTTP-specific concerns where practical.
+- Validate external input at application boundaries.
+- Never trust data received from the frontend or external APIs.
+- Do not allow AI output to bypass normal application validation or business rules.
+
+## Changes
+
+Before implementing a significant change:
+
+1. Understand the existing architecture.
+2. Inspect relevant files.
+3. Reuse existing patterns.
+4. Make the smallest reasonable change.
+5. Run relevant tests/type checks after implementation.
+
+Do not rewrite working code unnecessarily.
+
+## Agent Behavior
+
+- Do not create files unless they are necessary.
+- Do not modify unrelated files.
+- Do not introduce architectural changes without explaining the reason.
+- If an existing implementation conflicts with these rules, prefer consistency with the existing architecture unless there is a strong reason to refactor.

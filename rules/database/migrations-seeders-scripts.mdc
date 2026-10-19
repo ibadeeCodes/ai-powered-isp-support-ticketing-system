@@ -1,0 +1,48 @@
+---
+description: Rules for database migrations, development seeders, and production release/backfill scripts (3-tier separation)
+---
+
+# Migrations, Seeders & Production Release Scripts
+
+Never mix schema changes, development seed data, and production backfills. Always enforce this strict **3-tier separation**:
+
+---
+
+## 1. Schema Migrations (`src/migrations/`)
+
+- **Purpose**: Strictly for structural DDL changes **ONLY** (`CREATE TABLE`, `ALTER TABLE`, `ADD COLUMN`, `CREATE INDEX`, foreign keys).
+- **Rules**:
+  - Every schema change must be represented by a TypeORM migration.
+  - Never rely on automatic schema synchronization (`synchronize: true`) in production.
+  - Never manually modify production schemas outside of migrations.
+  - Never insert seed data, mock records, or business data backfills inside a migration.
+  - Never delete or modify an already-applied migration to fix a new schema change — always create a new migration.
+- **Workflow**:
+  1. Modify the TypeORM entity or schema definition.
+  2. Generate or write the migration (`npm run typeorm:generate -- src/migrations/<Name>`).
+  3. Review both `up` and `down` migration SQL before applying.
+  4. Run the migration locally (`npm run typeorm:run`).
+  5. Test the affected functionality before committing.
+
+---
+
+## 2. Development Seeders (`src/seeds/`)
+
+- **Purpose**: Strictly for bootstrapping local development and test environments. Never run development seeders in production.
+- **Recommended Directory Structure**:
+  - `src/seeds/baseline/`: Core system reference data (lookup tables, default roles, essential system accounts) using deterministic fixed UUIDs so the data is stable across environments.
+  - `src/seeds/mock/`: Realistic volume test data (e.g., generated with `@faker-js/faker`) for development testing.
+  - `src/seeds/<name>.seeder.ts`: Root orchestrator that runs seeders in dependency order (baseline first, then mock).
+- **Idempotency Rule**:
+  - Every seeder **MUST** be idempotent. Use `.upsert([...], ['conflictColumn'])` on the unique constraint column (e.g., `['email']`, `['code']`, `['slug']`) so repeated seeder runs never fail or create duplicate rows.
+
+---
+
+## 3. Production Release & Backfill Scripts (`src/scripts/release/`)
+
+- **Purpose**: One-time production deployment scripts for setting up essential baseline production data or backfilling legacy records affected by a new feature.
+- **Naming Convention**: Version-prefix scripts to make execution order and history explicit (e.g., `v1.0-setup-baseline.ts`, `v1.1-backfill-legacy-records.ts`).
+- **Rules**:
+  - **Fail-Fast Safety Checks**: Always verify that required foreign key entities (e.g., a target team, role, or account) exist in the database before executing any `UPDATE` or `INSERT`. Throw a descriptive error if a prerequisite is missing.
+  - **Strict Idempotency**: Scope all updates with a `WHERE <column> IS NULL` guard (or equivalent condition) so re-running the script is always a safe no-op.
+  - **Execution**: Scripts must be runnable as standalone TypeScript files from inside the project root (e.g., via `ts-node -r tsconfig-paths/register src/scripts/release/<script>.ts`). Add npm script shortcuts for convenience.

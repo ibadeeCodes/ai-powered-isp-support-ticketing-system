@@ -1,0 +1,55 @@
+---
+description: Response data sanitization, entity credential stripping, production error masking, and log hygiene
+---
+
+# Data Sanitization & Information Leak Prevention
+
+## 1. Credential Stripping on Loaded Entity Relations
+
+When database queries eager-load or join user or account entities (e.g., loading an `order.customer` or `ticket.assignedAgent`), **sensitive credentials must be stripped immediately** before returning the object.
+
+### Mandatory Rules:
+- **Never Return Password Hashes**: Even though passwords are encrypted/hashed, password hashes must never be transmitted over the API wire. An attacker collecting hashes can run offline rainbow table or brute-force cracking.
+- **Sanitize at Service Boundary**: Strip sensitive fields in the service before passing data to controllers, or map to strict Response DTOs.
+- **Entity Exclusion**: Annotate sensitive columns with `@Column({ select: false })` or use class-transformer `@Exclude()` on entity definitions where applicable.
+
+```typescript
+// ✅ Explicit relation credential stripping
+const ticket = await this.ticketRepository.findOne({
+  where: { id },
+  relations: ['customer', 'assignedAgent'],
+});
+
+if (ticket?.assignedAgent) {
+  delete (ticket.assignedAgent as Partial<User>).password;
+}
+```
+
+---
+
+## 2. Production Error Masking (Zero Information Leakage)
+
+In production environments, error responses must never expose internal infrastructure details, database schemas, or stack traces.
+
+### Masking Standards:
+- **Generic 500 Responses**: Unhandled server errors (database connection loss, TypeORM syntax errors, Redis disconnects) must return generic user-facing JSON:
+  ```json
+  {
+    "statusCode": 500,
+    "message": "Internal server error"
+  }
+  ```
+- **Never Leak Raw Driver Errors**: Database exceptions containing SQL queries, table names, constraint names, or server IPs must never be included in HTTP responses.
+- **Internal Full Logging**: The global `HttpExceptionFilter` must log the full stack trace and error context **internally** via NestJS `Logger.error()` for developer debugging, while sanitizing the outbound client payload.
+
+---
+
+## 3. Sensitive Data Redaction in Application Logs
+
+Application logs are often aggregated into centralized logging systems (e.g., Datadog, CloudWatch, ELK), where broad internal teams have read access.
+
+### Logging Invariants:
+- **Never Log Cleartext Passwords**: Avoid logging raw request bodies from `/auth/login` or `/auth/register`.
+- **Mask Tokens & Headers**: Omit or redact the `Authorization` header (`Bearer eyJ...`), refresh tokens, API keys, and session cookies from HTTP logging middleware.
+- **PII Hygiene**: Minimize logging of customer personally identifiable information (PII) such as national IDs, credit card numbers, or full phone numbers unless explicitly required for compliance audit logs.
+

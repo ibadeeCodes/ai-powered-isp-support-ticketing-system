@@ -1,0 +1,164 @@
+---
+description: Application modular architecture, domain-driven structure, and Controller vs. Service separation of concerns
+---
+
+# Modular Structure & Layer Responsibilities
+
+## 1. Domain-Driven Modular Structure
+
+Organize the application codebase by cohesive business/domain modules rather than by technical file type:
+
+```text
+src/
+├── <domain-module>/           # e.g., users, orders, billing
+│   ├── dto/                   # Request & Response DTOs
+│   ├── entities/              # TypeORM database entities
+│   ├── <domain>.controller.ts # HTTP routing and request handling
+│   ├── <domain>.service.ts    # Business logic & domain operations
+│   ├── <domain>.repository.ts # Custom queries & QueryBuilder abstraction (mandatory for complex queries)
+│   ├── <domain>.module.ts     # NestJS module definition
+│   └── tests/                 # Unit & integration tests
+└── common/                    # Shared cross-cutting concerns (guards, filters, decorators, utilities)
+```
+
+Each domain module encapsulates its own:
+- Controller (HTTP entry point)
+- Service (business logic orchestration)
+- Repository (data access abstraction for complex queries)
+- DTOs (API input/output contracts)
+- Entities (persistence models)
+- Module configuration & unit tests
+
+---
+
+## 2. Controllers (Transport Layer Only)
+
+Controllers are strictly responsible for HTTP transport concerns. They must remain thin and delegate all domain workflows to application services.
+
+### Responsibilities:
+- Route declaration and path mapping
+- Request parameter, query, and body parsing
+- DTO validation boundaries
+- Authentication and authorization guard enforcement
+- HTTP status code and response mapping
+
+### Hard Rule: Zero Business Logic in Controllers
+Controllers must **never** execute database queries, apply business validation rules, perform calculations, or invoke third-party services directly.
+
+```text
+❌ Antipattern:
+Controller ──► Direct DB Query ──► Business Validation ──► External API Call
+
+✅ Standard Flow:
+Controller ──► Application Service / Use-Case ──► Repositories & Domain Services
+```
+
+---
+
+## 3. Services (Application & Domain Logic)
+
+Business logic belongs exclusively in application services and domain use-cases.
+
+### Responsibilities:
+- Coordinate multi-step business operations
+- Enforce domain rules, invariants, and state transitions
+- Interact with repositories and infrastructure services via dependency injection
+- Manage transaction boundaries where atomic consistency is required
+
+### Service Sizing & Single Responsibility:
+- Keep services cohesive and focused on a single domain area.
+- Avoid creating bloated "God Services" that handle multiple unrelated workflows.
+- When a service grows too large, decompose it into specialized sub-services (e.g., `<domain>-assignment.service.ts`, `<domain>-notification.service.ts`) or dedicated use-case handlers.
+
+---
+
+## 4. Repositories (Data Access Layer & Query Encapsulation)
+
+### Query Complexity Threshold Rule:
+- **Simple 1-Line CRUD** (`findOne({ where: { id } })`, `save(entity)`): Direct injection of TypeORM's `@InjectRepository(Entity)` inside the service is acceptable.
+- **Complex Queries**: Whenever a query requires `createQueryBuilder`, multi-table joins, subqueries, complex `WHERE` logic with `Brackets`, or aggregation (`COUNT`, `GROUP BY`), it **must be encapsulated inside a dedicated `<domain>.repository.ts`**.
+
+### Why Custom Repositories Matter:
+1. **Clean Services**: Services coordinate business decisions; they should not assemble SQL syntax or low-level QueryBuilder chains.
+2. **Simplified Unit Testing**: Mocking a chained `createQueryBuilder().leftJoin().where().getMany()` in Jest requires mocking 6–10 chained methods. With a custom repository, the service test mocks a single clean method:
+   ```typescript
+   jest.spyOn(orderRepository, 'findActiveByUser').mockResolvedValue([mockOrder]);
+   ```
+3. **Query Reusability**: Reusable domain query definitions instead of copy-pasted SQL/QueryBuilder blocks across multiple services.
+
+### Implementation Pattern (TypeORM 0.3+ Composition):
+Implement custom repositories as `@Injectable()` classes that wrap the TypeORM repository via constructor injection:
+
+```typescript
+@Injectable()
+export class OrderRepository {
+  constructor(
+    @InjectRepository(Order)
+    private readonly repo: Repository<Order>,
+  ) {}
+
+  async findActiveByUser(userId: string): Promise<Order[]> {
+    return this.repo
+      .createQueryBuilder('order')
+      .where('order.user_id = :userId', { userId })
+      .andWhere('order.status IN (:...statuses)', { statuses: ['PENDING', 'PROCESSING'] })
+      .orderBy('order.created_at', 'DESC')
+      .getMany();
+  }
+
+  // Delegate simple operations when needed
+  async findById(id: string): Promise<Order | null> {
+    return this.repo.findOne({ where: { id } });
+  }
+
+  async save(order: Order): Promise<Order> {
+    return this.repo.save(order);
+  }
+}
+```
+
+## 4. Repositories (Data Access Layer & Query Encapsulation)
+
+### Query Complexity Threshold Rule:
+- **Simple 1-Line CRUD** (`findOne({ where: { id } })`, `save(entity)`): Direct injection of TypeORM's `@InjectRepository(Entity)` inside the service is acceptable.
+- **Complex Queries**: Whenever a query requires `createQueryBuilder`, multi-table joins, subqueries, complex `WHERE` logic with `Brackets`, or aggregation (`COUNT`, `GROUP BY`), it **must be encapsulated inside a dedicated `<domain>.repository.ts`**.
+
+### Why Custom Repositories Matter:
+1. **Clean Services**: Services coordinate business decisions; they should not assemble SQL syntax or low-level QueryBuilder chains.
+2. **Simplified Unit Testing**: Mocking a chained `createQueryBuilder().leftJoin().where().getMany()` in Jest requires mocking 6–10 chained methods. With a custom repository, the service test mocks a single clean method:
+   ```typescript
+   jest.spyOn(orderRepository, 'findActiveByUser').mockResolvedValue([mockOrder]);
+   ```
+3. **Query Reusability**: Reusable domain query definitions instead of copy-pasted SQL/QueryBuilder blocks across multiple services.
+
+### Implementation Pattern (TypeORM 0.3+ Composition):
+Implement custom repositories as `@Injectable()` classes that wrap the TypeORM repository via constructor injection:
+
+```typescript
+@Injectable()
+export class OrderRepository {
+  constructor(
+    @InjectRepository(Order)
+    private readonly repo: Repository<Order>,
+  ) {}
+
+  async findActiveByUser(userId: string): Promise<Order[]> {
+    return this.repo
+      .createQueryBuilder('order')
+      .where('order.user_id = :userId', { userId })
+      .andWhere('order.status IN (:...statuses)', { statuses: ['PENDING', 'PROCESSING'] })
+      .orderBy('order.created_at', 'DESC')
+      .getMany();
+  }
+
+  // Delegate simple operations when needed
+  async findById(id: string): Promise<Order | null> {
+    return this.repo.findOne({ where: { id } });
+  }
+
+  async save(order: Order): Promise<Order> {
+    return this.repo.save(order);
+  }
+}
+```
+

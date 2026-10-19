@@ -1,0 +1,67 @@
+---
+description: Rules for request DTO validation, input sanitization, class-validator, and entity isolation
+---
+
+# DTOs, Input Validation & Entity Isolation
+
+## 1. Zero-Trust External Input & Global Validation
+
+Never trust data received from the client. Every external payload entering the application must pass through strict schema validation before reaching any service or business logic.
+
+### Global ValidationPipe Standard
+The application must configure NestJS's global `ValidationPipe` with strict validation settings:
+
+```typescript
+app.useGlobalPipes(
+  new ValidationPipe({
+    whitelist: true,              // Strips properties that lack validator decorators
+    forbidNonWhitelisted: true,   // Throws 400 if extra/unexpected properties are present
+    transform: true,              // Automatically coerces payloads to DTO class instances
+    transformOptions: {
+      enableImplicitConversion: false, // Explicit @Type() decorators required for conversions
+    },
+  }),
+);
+```
+
+---
+
+## 2. DTO Design & Class-Validator Rules
+
+Every endpoint accepting incoming data (body, query parameters, or route params) must define a dedicated DTO class.
+
+### Validation Rules
+- **Explicit Decorators for Every Field**: Every DTO property must have at least one explicit validation decorator (`@IsString()`, `@IsUUID()`, `@IsEmail()`, `@IsEnum()`, `@IsNumber()`, `@IsBoolean()`).
+- **Optional Fields**: Mark optional properties explicitly with `@IsOptional()`.
+- **Nested Objects**: Use `@ValidateNested()` combined with `@Type(() => ChildDto)` to validate complex or nested object structures.
+- **Query Parameter Types**: Because query string parameters arrive as strings, use `@Type(() => Number)` or custom transformers when parsing numbers (e.g., `page`, `limit`).
+
+---
+
+## 3. Dedicated DTOs per Operation
+
+Do not reuse a single DTO for multiple conflicting operations:
+
+- **Create DTO (`CreateResourceDto`)**: Contains all fields required for initial resource creation.
+- **Update DTO (`UpdateResourceDto`)**: Extend `PartialType(CreateResourceDto)` from `@nestjs/mapped-types` or `@nestjs/swagger` so that fields become optional while retaining their validation rules.
+- **Query DTO (`GetResourcesQueryDto`)**: Captures pagination, sorting, search, and filter parameters with sensible defaults.
+
+```typescript
+// Example: Reusable Update DTO
+export class UpdateOrderDto extends PartialType(CreateOrderDto) {}
+```
+
+---
+
+## 4. Never Expose Database Entities as API Contracts
+
+Controllers and endpoints must **never** return raw database entities (TypeORM entities) directly to clients.
+
+### Why:
+1. **Security / Secret Leakage**: Raw entities can accidentally leak sensitive internal columns (e.g., password hashes, private auth tokens, internal billing IDs, soft-delete flags).
+2. **Contract Coupling**: Changes to the database table schema should not silently alter the public API contract consumed by frontends and external clients.
+
+### Standard Practice:
+- Map entity models to explicit **Response DTOs** before returning them from controllers or services.
+- Alternatively, apply strict class-transformer serialization (`@Exclude()`, `@Expose()`, and `ClassSerializerInterceptor`) to strip internal fields deterministically.
+

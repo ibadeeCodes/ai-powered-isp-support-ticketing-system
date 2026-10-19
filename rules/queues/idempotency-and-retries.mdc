@@ -1,0 +1,87 @@
+---
+description: Rules for background worker idempotency, exponential backoff retries, Redis memory hygiene, and dead-letter queue handling
+---
+
+# Worker Idempotency, Retries & Dead-Letter Handling
+
+## 1. The Golden Rule of Worker Idempotency
+
+In distributed background queues, **at-least-once delivery is the standard**. A job may run multiple times due to worker crashes, network timeouts, Redis reconnects, or automated retries.
+
+> **Hard Invariant**: Every worker processor must be **strictly idempotent**. Executing the same job twice with the same payload must produce the exact same end state without duplicate side-effects.
+
+### The Check-Then-Act Pattern
+When a job coordinates multiple operations (especially external API calls, credit transactions, or notification dispatches):
+1. Persist the output of each major step or record a status marker immediately.
+2. At the start of the job (or before each step), **check the database** to determine whether that step was already completed in a prior attempt.
+3. If completed, skip the expensive or non-idempotent action and proceed directly to remaining work.
+
+```typescript
+// ✅ Check-Then-Act: Safe across retries
+const existingRecord = await this.auditRepository.findOne({ where: { referenceId } });
+
+let resultData = existingRecord?.output;
+if (!resultData) {
+  // Step 1: External call happens ONLY if not already persisted
+  resultData = await this.externalService.process(referenceId);
+  await this.auditRepository.save({ referenceId, output: resultData });
+}
+
+// Step 2: Safe local DB update
+await this.primaryRepository.update(referenceId, { status: 'COMPLETED', result: resultData });
+```
+
+---
+
+## 2. Exponential Backoff & Retry Policies
+
+Never enqueue background jobs without explicit retry and backoff constraints. Instant retries overwhelm downstream APIs and database connections during outages.
+
+### Mandatory Configuration:
+- **Bounded Attempts**: Explicitly limit retry attempts (typically `3` to `5` attempts).
+- **Exponential Backoff**: Always configure exponential backoff so wait times scale progressively (e.g., 2s, 4s, 8s...).
+
+```typescript
+await queue.add(
+  JOB_NAME,
+  jobData,
+  {
+    attempts: 3,
+    backoff: {
+      type: 'exponential',
+      delay: 2000, // Initial delay in milliseconds (2s -> 4s -> 8s)
+    },
+    removeOnComplete: { age: 3600, count: 1000 },
+    removeOnFail: { age: 86400 * 7 }, // Preserve failed jobs for 7 days
+  },
+);
+```
+
+---
+
+## 3. Redis Memory Management & DLQ Retention
+
+Unmanaged background queues accumulate thousands of completed and failed job records in Redis, eventually exhausting memory and crashing the server.
+
+### Retention Standards:
+- **`removeOnComplete`**:
+  - Bound completed job retention (e.g., `{ age: 3600, count: 1000 }` to keep at most 1,000 completed jobs or jobs younger than 1 hour).
+  - If completed job history is not required for monitoring, set `removeOnComplete: true`.
+- **`removeOnFail` (Dead-Letter Retention)**:
+  - **Never** silently discard failed jobs (`removeOnFail: true` is an antipattern for production).
+  - Retain failed jobs for post-mortem inspection and manual replay (e.g., `{ age: 86400 * 7 }` to retain for 7 days).
+
+---
+
+## 4. Deterministic Error Handling in Workers
+
+Workers must distinguish between transient failures (eligible for retry) and fatal business failures (unrecoverable).
+
+### Guidelines:
+- **Transient Failures** (network timeouts, rate limits, database lock timeouts):
+  - Log an error with context (`job.id`, attempt count, resource ID).
+  - **Re-throw the error** so BullMQ registers the failure and schedules the retry according to backoff policy.
+- **Permanent / Unrecoverable Failures** (payload validation failed, target entity deleted):
+  - Do not exhaust all retries pointlessly.
+  - Log a descriptive error, perform any necessary cleanup/status updates, and complete or fail the job deterministically without further retries (e.g., using `UnrecoverableError` if supported).
+

@@ -1,0 +1,55 @@
+---
+description: RESTful API design standards, resource URL conventions, HTTP verbs, and deterministic status codes
+---
+
+# REST API Conventions & Design Rules
+
+## 1. Resource-Oriented URLs
+
+Endpoints must follow RESTful, resource-oriented URI conventions:
+
+- **Use Plural Nouns**: Use plural nouns for resources (`/orders`, `/users`, `/tenants`).
+- **Sub-Resources for Relationships**: Express hierarchical relationships via nested paths (`/customers/:customerId/orders`, `/teams/:teamId/members`).
+- **Kebab-Case Paths**: Multi-word resource paths must use `kebab-case` (`/support-tickets`, `/audit-logs`).
+- **No Verbs in Standard Resource Paths**:
+  - ❌ Avoid: `/getUsers`, `/createOrder`, `/delete-ticket/123`
+  - ✅ Correct: `GET /users`, `POST /orders`, `DELETE /tickets/123`
+- **Action Endpoints (Exceptions)**: For non-CRUD business actions that do not map to simple resource modification, use clear, specific verb suffixes on the resource:
+  - Examples: `POST /auth/login`, `POST /orders/:id/cancel`, `POST /reports/:id/export`
+
+---
+
+## 2. HTTP Verbs & Semantics
+
+Use HTTP methods strictly according to their standard semantics:
+
+| Method | Idempotent | Safe | Request Body | Primary Purpose | Standard Success Status |
+| :--- | :---: | :---: | :---: | :--- | :--- |
+| **`GET`** | Yes | Yes | **No** | Retrieve resource(s). Query parameters for filters/pagination only. | `200 OK` |
+| **`POST`** | No | No | Yes | Create a new resource or trigger an action. | `201 Created` (creation) or `200 OK` (action) |
+| **`PATCH`** | No | No | Yes | Partial update. Modify only fields provided in the body. | `200 OK` |
+| **`PUT`** | Yes | No | Yes | Complete resource replacement. Replace entire entity with payload. *(Prefer `PATCH` unless full replacement is required).* | `200 OK` |
+| **`DELETE`** | Yes | No | No | Remove a resource. | `200 OK` (with deleted summary) or `204 No Content` |
+
+---
+
+## 3. Deterministic HTTP Status Codes
+
+Always return standard, deterministic HTTP status codes from controllers and filters:
+
+### Success Codes
+- **`200 OK`**: Standard response for successful `GET`, `PATCH`, `PUT`, or non-creation `POST` actions.
+- **`201 Created`**: Returned on successful resource creation via `POST`.
+- **`204 No Content`**: Returned on successful deletion or actions where no response body is returned.
+
+### Client Error Codes
+- **`400 Bad Request`**: Request payload failed DTO validation or schema rules.
+- **`401 Unauthorized`**: Authentication is missing, expired, or invalid.
+- **`403 Forbidden`**: Authenticated successfully, but user lacks permission (insufficient role, or does not own the resource).
+- **`404 Not Found`**: Target resource does not exist.
+- **`409 Conflict`**: Conflict with existing state (e.g., unique key violation, invalid state transition).
+- **`422 Unprocessable Entity`**: Request is syntactically valid JSON, but violates domain or business logic validation rules.
+
+### Server Error Codes
+- **`500 Internal Server Error`**: Unexpected server-side failure. Must be logged with full details internally, but masked from clients.
+

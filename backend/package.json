@@ -1,0 +1,83 @@
+{
+  "name": "isp-support-ticketing-backend",
+  "version": "0.0.1",
+  "description": "Internet Service Provider AI Support Ticketing System Backend",
+  "author": "",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "nest build",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:debug": "nest start --debug --watch",
+    "start:prod": "node dist/main",
+    "test": "jest",
+    "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js",
+    "typeorm:run": "npm run typeorm migration:run -- -d ./src/data-source.ts",
+    "typeorm:generate": "npm run typeorm migration:generate -- -d ./src/data-source.ts",
+    "typeorm:revert": "npm run typeorm migration:revert -- -d ./src/data-source.ts",
+    "typeorm:drop": "npm run typeorm schema:drop -- -d ./src/data-source.ts",
+    "seed:dev": "npx typeorm-extension seed:run -d ./src/data-source.ts",
+    "db:fresh": "npm run typeorm:drop && npm run typeorm:run && npm run seed:dev",
+    "release:v1.0": "ts-node -r tsconfig-paths/register src/scripts/release/v1.0-essential-and-backfill-data.ts",
+    "release:v1.1": "ts-node -r tsconfig-paths/register src/scripts/release/v1.1-backfill-legacy-open-tickets.ts"
+  },
+  "dependencies": {
+    "@faker-js/faker": "^10.6.0",
+    "@nestjs/bullmq": "^10.2.0",
+    "@nestjs/common": "^10.3.2",
+    "@nestjs/config": "^3.2.0",
+    "@nestjs/core": "^10.3.2",
+    "@nestjs/jwt": "^10.2.0",
+    "@nestjs/passport": "^10.0.3",
+    "@nestjs/platform-express": "^10.3.2",
+    "@nestjs/typeorm": "^10.0.2",
+    "bcryptjs": "^2.4.3",
+    "bullmq": "^5.8.3",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
+    "ioredis": "^6.0.0",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1",
+    "pg": "^8.11.3",
+    "reflect-metadata": "^0.2.1",
+    "rxjs": "^7.8.1",
+    "typeorm": "^0.3.20",
+    "typeorm-extension": "^4.2.0"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.3.1",
+    "@nestjs/schematics": "^10.1.0",
+    "@nestjs/testing": "^10.3.2",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/express": "^4.17.21",
+    "@types/jest": "^29.5.12",
+    "@types/node": "^20.11.16",
+    "@types/passport-jwt": "^4.0.1",
+    "@types/pg": "^8.11.0",
+    "jest": "^29.7.0",
+    "source-map-support": "^0.5.21",
+    "ts-jest": "^29.1.2",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.3.3"
+  },
+  "jest": {
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
+    "rootDir": "src",
+    "testRegex": ".*\\.spec\\.ts$",
+    "transform": {
+      "^.+\\.(t|j)s$": "ts-jest"
+    },
+    "collectCoverageFrom": [
+      "**/*.(t|j)s"
+    ],
+    "coverageDirectory": "../coverage",
+    "testEnvironment": "node"
+  }
+}

@@ -1,0 +1,78 @@
+---
+description: Authorization standards, two-tier access control, IDOR prevention, and immutable field protection
+---
+
+# Authorization, RBAC & Resource Ownership Rules
+
+## 1. The Two-Tier Access Control Model
+
+Role checks alone are insufficient for secure authorization. Every protected endpoint must evaluate access across two distinct tiers:
+
+```text
+Incoming Request
+       │
+       ▼
+[ Tier 1: Role-Based Check (RBAC) ] ──► "Does user have the required role?" (e.g., ADMIN, AGENT, CUSTOMER)
+       │ (Pass)
+       ▼
+[ Tier 2: Resource Ownership Check ] ──► "Does this specific resource belong to the user/tenant?"
+       │ (Pass)
+       ▼
+Execute Domain Operation
+```
+
+### The IDOR Trap (Insecure Direct Object Reference):
+Relying solely on Tier 1 (`@Roles('CUSTOMER')`) allows Customer A to view or modify Customer B's resources simply by guessing or tampering with the ID (`/orders/uuid-belonging-to-b`). 
+
+**Mandatory Rule**: Every operation on a specific resource must enforce Tier 2 resource ownership validation.
+
+---
+
+## 2. Preventing IDOR at the Database Query Boundary
+
+Enforce resource ownership **directly in the SQL query** rather than loading data into memory and checking afterwards:
+
+```typescript
+// ❌ Dangerous: Vulnerable to IDOR if developer forgets ownership check
+const order = await this.orderRepository.findOne({ where: { id: orderId } });
+// If no ownership check follows, any authenticated user can view order
+
+// ✅ Secure: Ownership enforced directly in database query
+const order = await this.orderRepository.findOne({
+  where: {
+    id: orderId,
+    customerId: user.customerId, // Scoped to authenticated user
+  },
+});
+if (!order) {
+  throw new NotFoundException(`Order not found`);
+}
+```
+
+> **Note**: Prefer returning `404 Not Found` (rather than `403 Forbidden`) when an ownership query yields no record, so attackers cannot determine whether a resource ID exists.
+
+---
+
+## 3. Read Visibility vs. Write Modification Boundaries
+
+In multi-user or team workflows, viewing permissions must remain strictly decoupled from modification permissions:
+
+- **Team/Tenant Read Visibility**: Users may have permission to view all resources scoped to their team, department, or organization to foster collaboration and workload awareness.
+- **Individual Write Ownership**: Only the assigned owner or user with explicit modification authority may execute mutations (status updates, field edits, deletions).
+- **Rule**: Viewing a teammate's or tenant's resource must **never** automatically grant permission to modify it.
+
+---
+
+## 4. Protecting Immutable Identity & Security Fields
+
+Endpoints performing updates (`PATCH /users/:id`, `PATCH /resources/:id`) must strictly prevent mass-assignment attacks that tamper with security-critical or identity fields.
+
+### Hard Invariants:
+- The following fields must **never be mutable** via standard update DTOs:
+  - `id` (Primary Key)
+  - `role` (Role-based access level)
+  - `owner_id` / `customer_id` / `tenant_id` (Resource ownership association)
+  - `is_verified` / `is_active` (Account verification flags)
+  - `created_at` (Audit timestamps)
+- Dedicated, highly privileged endpoints (e.g., admin role management) must be created if these fields genuinely need to be modified, protected by explicit elevated guards.
+
